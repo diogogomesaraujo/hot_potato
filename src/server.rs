@@ -12,7 +12,6 @@ use tokio_util::codec::{Framed, LinesCodec};
 pub struct Server {
     pub own_address: String,
     pub number_of_peers: usize,
-    // pub peer_addresses: HashMap<SocketAddr, Tx>,
 }
 
 pub struct PeerConnecton {
@@ -25,7 +24,7 @@ impl Server {
     pub fn new(own_address: String, number_of_peers: usize) -> Self {
         Self {
             own_address,
-            number_of_peers, // peer_addresses: HashMap::new(),
+            number_of_peers,
         }
     }
 

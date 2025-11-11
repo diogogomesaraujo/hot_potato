@@ -1,9 +1,10 @@
 use crate::*;
 use futures::{SinkExt, StreamExt};
-use std::{error::Error, net::SocketAddr, sync::Arc};
+use std::{error::Error, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     net::{TcpListener, TcpStream},
-    sync::Mutex,
+    sync::{Mutex, Notify},
+    time::sleep,
 };
 use tokio_util::codec::{Framed, LinesCodec};
 
@@ -28,11 +29,10 @@ impl Peer {
     pub async fn handle_previous_peer(
         previous_peer_stream: TcpStream,
         previous_peer_address: SocketAddr,
-        next_peer_stream: TcpStream,
         current_peer_server: Arc<Mutex<Self>>,
+        holding_hot_potato_notify: Arc<Notify>,
     ) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut previous_peer_lines = Framed::new(previous_peer_stream, LinesCodec::new());
-        let mut next_peer_lines = Framed::new(next_peer_stream, LinesCodec::new());
 
         loop {
             tokio::select! {
@@ -46,16 +46,7 @@ impl Peer {
                             {
                                 let mut current_peer_server = current_peer_server.lock().await;
                                 current_peer_server.hot_potato_state = HotPotatoState::Holding(hot_potato);
-                            }
-
-                            // throw hot potato
-                            {
-                                next_peer_lines.send(hot_potato_string).await?;
-                            }
-
-                            {
-                                let mut current_peer_server = current_peer_server.lock().await;
-                                current_peer_server.hot_potato_state = HotPotatoState::NotHolding;
+                                holding_hot_potato_notify.notify_one();
                             }
                         },
                         Err(_) => {
@@ -72,6 +63,9 @@ impl Peer {
         let server_stream = TcpStream::connect(&self.server_address).await?;
         let mut server_lines = Framed::new(server_stream, LinesCodec::new());
 
+        // open a server for previous Peer to connect
+        let previous_peer_listener = TcpListener::bind(&self.address).await?;
+
         // receive starting flag
         let _ = match server_lines.next().await {
             Some(Ok(line)) if matches!(StartFlag::from_json_string(&line)?, StartFlag(_)) => {}
@@ -82,14 +76,14 @@ impl Peer {
         let current_peer = Arc::new(Mutex::new(self.clone()));
 
         // connect to the next Peer's server
-        //let next_peer_stream = TcpStream::connect(&self.next_peer_address).await?;
+        let next_peer_stream = TcpStream::connect(&self.next_peer_address).await?;
 
-        // open a server for previous Peer to connect
-        //let previous_peer_listener = TcpListener::bind(&self.address).await?;
+        let holding_hot_potato_notify = Arc::new(Notify::new());
 
         // thread that handles the server connection
         let operation_server_thread = {
             let current_peer = Arc::clone(&current_peer);
+            let holding_hot_potato_notify = holding_hot_potato_notify.clone();
 
             tokio::spawn(async move {
                 loop {
@@ -98,6 +92,7 @@ impl Peer {
                             if let Ok(hot_potato) = HotPotato::from_json_string(&msg) {
                                 let mut current_peer = current_peer.lock().await;
                                 current_peer.hot_potato_state = HotPotatoState::Holding(hot_potato);
+                                holding_hot_potato_notify.notify_one();
                                 println!("Holding hot potato!");
                             }
 
@@ -111,8 +106,9 @@ impl Peer {
         };
 
         // open server connection for previous peer to join
-        /*let hot_potato_thread = {
+        let previous_peer_thread = {
             let current_peer = Arc::clone(&current_peer);
+            let holding_hot_potato_notify = holding_hot_potato_notify.clone();
 
             tokio::spawn(async move {
                 let (previous_peer_stream, previous_peer_address) = previous_peer_listener
@@ -123,18 +119,47 @@ impl Peer {
                 if let Err(e) = Self::handle_previous_peer(
                     previous_peer_stream,
                     previous_peer_address,
-                    next_peer_stream,
                     current_peer,
+                    holding_hot_potato_notify,
                 )
                 .await
                 {
                     eprintln!("{e}");
                 };
             })
-        };*/
+        };
+
+        let throw_hot_potato_thread = {
+            let current_peer = Arc::clone(&current_peer);
+            let holding_hot_potato_notify = holding_hot_potato_notify.clone();
+
+            let mut next_peer_lines = Framed::new(next_peer_stream, LinesCodec::new());
+
+            tokio::spawn(async move {
+                loop {
+                    holding_hot_potato_notify.notified().await;
+                    {
+                        let mut current_peer = current_peer.lock().await;
+                        if let (HotPotatoState::Holding(hot_potato)) =
+                            &current_peer.hot_potato_state
+                        {
+                            if let Ok(hot_potato_string) = hot_potato.to_json_string() {
+                                sleep(Duration::from_secs(2)).await;
+                                next_peer_lines
+                                    .send(hot_potato_string)
+                                    .await
+                                    .expect("Couldn't send hot potato to next peer.");
+                            }
+                        }
+                        current_peer.hot_potato_state = HotPotatoState::NotHolding;
+                    }
+                }
+            })
+        };
 
         operation_server_thread.await?;
-        //hot_potato_thread.await?;
+        previous_peer_thread.await?;
+        throw_hot_potato_thread.await?;
 
         Ok(())
     }
