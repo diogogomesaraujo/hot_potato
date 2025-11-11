@@ -1,7 +1,5 @@
-use crate::hot_potato::*;
-use crate::operation::*;
+use crate::message::*;
 
-pub mod hot_potato;
-pub mod operation;
+pub mod message;
 pub mod peer;
 pub mod server;

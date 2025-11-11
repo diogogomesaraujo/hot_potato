@@ -26,8 +26,4 @@ impl HotPotato {
     pub fn from_json_string(token: &str) -> Result<Self, Box<dyn Error + Send + Sync>> {
         Ok(serde_json::from_str::<Self>(token)?)
     }
-
-    pub async fn from_json_string_async(token: &str) -> Result<Self, Box<dyn Error + Send + Sync>> {
-        Ok(serde_json::from_str::<Self>(token)?)
-    }
 }

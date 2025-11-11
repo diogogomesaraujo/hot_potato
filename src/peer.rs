@@ -67,34 +67,43 @@ impl Peer {
         }
     }
 
-    pub async fn run(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn run(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
         // client connections
         let server_stream = TcpStream::connect(&self.server_address).await?;
-        let next_peer_stream = TcpStream::connect(&self.next_peer_address).await?;
+        let mut server_lines = Framed::new(server_stream, LinesCodec::new());
 
-        // let mut server_lines = Framed::new(server_stream, LinesCodec::new());
+        // receive starting flag
+        let _ = match server_lines.next().await {
+            Some(Ok(line)) if matches!(StartFlag::from_json_string(&line)?, StartFlag(_)) => {}
+            _ => return Err("Failed to receive starting flag".into()),
+        };
 
-        // server connection
-        let previous_peer_listener = TcpListener::bind(&self.address).await?;
-
-        // create a thread-safe hot potato
+        // create a thread-safe state instance
         let current_peer = Arc::new(Mutex::new(self.clone()));
 
+        // connect to the next Peer's server
+        //let next_peer_stream = TcpStream::connect(&self.next_peer_address).await?;
+
+        // open a server for previous Peer to connect
+        //let previous_peer_listener = TcpListener::bind(&self.address).await?;
+
+        // thread that handles the server connection
         let operation_server_thread = {
             let current_peer = Arc::clone(&current_peer);
 
             tokio::spawn(async move {
-                let mut server_lines = Framed::new(server_stream, LinesCodec::new());
+                loop {
+                    tokio::select! {
+                        Some(Ok(msg)) = server_lines.next() => {
+                            if let Ok(hot_potato) = HotPotato::from_json_string(&msg) {
+                                let mut current_peer = current_peer.lock().await;
+                                current_peer.hot_potato_state = HotPotatoState::Holding(hot_potato);
+                                println!("Holding hot potato!");
+                            }
 
-                tokio::select! {
-                    Some(Ok(msg)) = server_lines.next() => {
-                        if let Ok(hot_potato) = HotPotato::from_json_string(&msg) {
-                            let mut current_peer = current_peer.lock().await;
-                            current_peer.hot_potato_state = HotPotatoState::Holding(hot_potato);
-                        }
-
-                        if let Ok(operation_response) = Response::from_json_string(&msg) {
-                            operation_response.print();
+                            if let Ok(operation_response) = Response::from_json_string(&msg) {
+                                operation_response.print();
+                            }
                         }
                     }
                 }
@@ -102,7 +111,7 @@ impl Peer {
         };
 
         // open server connection for previous peer to join
-        let hot_potato_thread = {
+        /*let hot_potato_thread = {
             let current_peer = Arc::clone(&current_peer);
 
             tokio::spawn(async move {
@@ -122,10 +131,10 @@ impl Peer {
                     eprintln!("{e}");
                 };
             })
-        };
+        };*/
 
         operation_server_thread.await?;
-        hot_potato_thread.await?;
+        //hot_potato_thread.await?;
 
         Ok(())
     }
