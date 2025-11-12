@@ -1,4 +1,5 @@
 use crate::*;
+use color_print::cformat;
 use futures::{SinkExt, StreamExt};
 use std::{error::Error, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
@@ -15,8 +16,6 @@ pub struct Server {
 }
 
 pub struct PeerConnecton {
-    // pub receiver: Rx,
-    // pub sender: Tx,
     pub address: SocketAddr,
 }
 
@@ -43,7 +42,7 @@ impl Server {
         // wait for all participants to join
         barrier.wait().await;
 
-        println!("send start flag...");
+        log::info("send start flag to peer.");
         writer.send(StartFlag(true).to_json_string()?).await?;
         writer.flush().await?;
 
@@ -51,7 +50,9 @@ impl Server {
             let mut starts_with_hot_potato = starts_with_hot_potato.lock().await;
 
             if *starts_with_hot_potato {
-                println!("send hot potato...");
+                log::info(&cformat!(
+                    "Sending <yellow, bold>hot potato</yellow, bold> to a peer."
+                ));
                 *starts_with_hot_potato = false;
                 writer.send(StartFlag(true).to_json_string()?).await?;
                 writer.flush().await?;
@@ -73,7 +74,7 @@ impl Server {
         loop {
             let (peer_stream, peer_address) = listener.accept().await?;
 
-            println!("Accepted a connection.");
+            log::info("Accepted a connection.");
 
             let server = server.clone();
             let barrier = barrier.clone();
@@ -89,7 +90,7 @@ impl Server {
                 )
                 .await
                 {
-                    eprintln!("{e}");
+                    log::error("{e}");
                 };
             });
         }

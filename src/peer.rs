@@ -1,4 +1,5 @@
 use crate::*;
+use color_print::cformat;
 use futures::{SinkExt, StreamExt};
 use std::{error::Error, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
@@ -37,21 +38,15 @@ impl Peer {
         loop {
             tokio::select! {
                 Some(Ok(hot_potato_string)) = previous_peer_lines.next() => {
-                    match HotPotato::from_json_string(&hot_potato_string) {
-                        Ok(hot_potato) => {
-                            println!("Holding Hot Potato thrown by {}", previous_peer_address);
-                            // TODO check if there is things to compute before throwing the potato
-
-                            // get hold of hot potato
-                            {
-                                let mut current_peer_server = current_peer_server.lock().await;
-                                current_peer_server.hot_potato_state = HotPotatoState::Holding(hot_potato);
-                                holding_hot_potato_notify.notify_one();
-                            }
-                        },
-                        Err(_) => {
-                            // Do something if the hot potato is compromised
+                    if let Ok(hot_potato) =  HotPotato::from_json_string(&hot_potato_string) {
+                        // get hold of hot potato
+                        {
+                            let mut current_peer_server = current_peer_server.lock().await;
+                            current_peer_server.hot_potato_state = HotPotatoState::Holding(hot_potato);
+                            holding_hot_potato_notify.notify_one();
                         }
+
+                        log::debug(&cformat!("Currently holding <yellow, bold>hot potato</yellow, bold>"));
                     }
                 }
             }
@@ -93,7 +88,7 @@ impl Peer {
                                 let mut current_peer = current_peer.lock().await;
                                 current_peer.hot_potato_state = HotPotatoState::Holding(hot_potato);
                                 holding_hot_potato_notify.notify_one();
-                                println!("Holding hot potato!");
+                                log::debug(&cformat!("Currently holding <yellow, bold>hot potato</yellow, bold>"));
                             }
 
                             if let Ok(operation_response) = Response::from_json_string(&msg) {
@@ -124,7 +119,7 @@ impl Peer {
                 )
                 .await
                 {
-                    eprintln!("{e}");
+                    log::error("{e}");
                 };
             })
         };

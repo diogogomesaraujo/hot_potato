@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::{error::Error, time::Duration};
-use token_ring::server;
+use token_ring::{log, server};
 use tokio::time::sleep;
 
 #[derive(Parser, Debug)]
@@ -16,6 +16,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let args = Args::parse();
+    log::clear();
 
     let server = server::Server::new(args.self_address, args.number_of_peers);
 
